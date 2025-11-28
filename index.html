@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acid Drums Adaptation</title>
+    <style>
+        @font-face { font-family: 'Computerfont'; src: url('./acidworkassets/font/Computerfont.ttf'); }
+        body {
+            background-color: #1a1a1a;
+            color: #d5e98a;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 { margin-bottom: 20px; text-transform: uppercase; letter-spacing: 2px; }
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border: 2px solid #2718fb;
+            border-radius: 8px;
+            width: 300px;
+        }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-size: 12px; }
+        input[type=range] { width: 100%; }
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            background: #2718fb;
+            color: white;
+            border: none;
+            font-family: inherit;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+        button:hover { background: #4a3dfb; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        .status { margin-top: 10px; font-size: 10px; color: #888; text-align: center;}
+    </style>
+</head>
+<body>
+
+    <h1>Acid Drums</h1>
+
+    <div class="controls">
+        <button id="startBtn">Start Audio</button>
+        
+        <div class="control-group">
+            <label>Tempo: <span id="tempoVal">120</span> BPM</label>
+            <input type="range" id="tempo" min="60" max="200" value="120">
+        </div>
+
+        <hr style="border-color: #444; opacity: 0.5;">
+
+        <div class="control-group">
+            <label>Kick Tune</label>
+            <input type="range" id="kickPitch" min="30" max="100" value="50">
+        </div>
+        <div class="control-group">
+            <label>Kick Decay (Envelope)</label>
+            <input type="range" id="kickDecay" min="0.1" max="1.0" step="0.01" value="0.5">
+        </div>
+
+        <div class="control-group">
+            <label>Snare Tune</label>
+            <input type="range" id="snarePitch" min="150" max="400" value="220">
+        </div>
+        <div class="control-group">
+            <label>Snare Snap (Envelope)</label>
+            <input type="range" id="snareDecay" min="0.05" max="0.5" step="0.01" value="0.2">
+        </div>
+
+        <button id="randPatternBtn">Randomize Pattern</button>
+        <button id="randGrooveBtn">Randomize Groove</button>
+        <div class="status" id="status">Audio Context Suspended</div>
+    </div>
+
+    <script type="module">
+        import { SequencerNode } from './SequencerNode.js';
+        import { DrumsNode } from './DrumsNode.js';
+
+        let audioCtx;
+        let sequencerNode;
+        let drumsNode;
+        let isPlaying = false;
+
+        const startBtn = document.getElementById('startBtn');
+        const status = document.getElementById('status');
+
+        // Initial Randomization of Patch on Load
+        const initialKickPitch = 40 + Math.random() * 40; // 40-80Hz
+        const initialSnarePitch = 180 + Math.random() * 100; // 180-280Hz
+        document.getElementById('kickPitch').value = initialKickPitch;
+        document.getElementById('snarePitch').value = initialSnarePitch;
+
+        async function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            await audioCtx.audioWorklet.addModule('sequencer-processor.js');
+            await audioCtx.audioWorklet.addModule('drums-processor.js');
+
+            // 1. Create Nodes
+            sequencerNode = new SequencerNode(audioCtx);
+            drumsNode = new DrumsNode(audioCtx);
+
+            // 2. Routing: Sequencer (Control Sig) -> Drums (Audio) -> Destination
+            // Note: Sequencer outputs signals, not audio to be heard. 
+            // Channel 0 is Kick Trigger, Channel 1 is Snare Trigger.
+            sequencerNode.connect(drumsNode);
+            drumsNode.connect(audioCtx.destination);
+
+            // 3. Initialize Parameters
+            updateParams();
+            
+            // Randomize pattern on start
+            sequencerNode.randomizePattern(); 
+            sequencerNode.randomizeGroove();
+
+            status.textContent = "Running";
+            startBtn.textContent = "Stop Audio";
+            isPlaying = true;
+        }
+
+        function updateParams() {
+            if(!drumsNode) return;
+            
+            const kPitch = parseFloat(document.getElementById('kickPitch').value);
+            const kDecay = parseFloat(document.getElementById('kickDecay').value);
+            const sPitch = parseFloat(document.getElementById('snarePitch').value);
+            const sDecay = parseFloat(document.getElementById('snareDecay').value);
+            const tempo = parseFloat(document.getElementById('tempo').value);
+
+            drumsNode.parameters.get('kickPitch').value = kPitch;
+            drumsNode.parameters.get('kickDecay').value = kDecay;
+            drumsNode.parameters.get('snarePitch').value = sPitch;
+            drumsNode.parameters.get('snareDecay').value = sDecay;
+            
+            sequencerNode.parameters.get('tempo').value = tempo;
+            
+            document.getElementById('tempoVal').textContent = tempo;
+        }
+
+        // Listeners
+        startBtn.addEventListener('click', async () => {
+            if (!audioCtx) {
+                await initAudio();
+            } else {
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                    status.textContent = "Running";
+                    startBtn.textContent = "Stop Audio";
+                } else {
+                    await audioCtx.suspend();
+                    status.textContent = "Suspended";
+                    startBtn.textContent = "Start Audio";
+                }
+            }
+        });
+
+        document.querySelectorAll('input').forEach(input => {
+            input.addEventListener('input', updateParams);
+        });
+
+        document.getElementById('randPatternBtn').addEventListener('click', () => {
+            if(sequencerNode) sequencerNode.randomizePattern();
+        });
+
+        document.getElementById('randGrooveBtn').addEventListener('click', () => {
+            if(sequencerNode) sequencerNode.randomizeGroove();
+        });
+
+    </script>
+</body>
+</html>
